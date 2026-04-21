@@ -713,6 +713,7 @@ namespace ModuTree.Editor.Windows
             var menu      = new GenericMenu();
             var graphPos  = ScreenToGraph(graphMousePos);
             var hitGuid   = HitTestNode(graphMousePos);
+            var hitConn   = hitGuid == null ? HitTestConnection(graphMousePos) : null;
 
             if (hitGuid != null)
             {
@@ -743,6 +744,25 @@ namespace ModuTree.Editor.Windows
                             TryOpenSubTree(hitGuid));
                     }
                 }
+            }
+            else if (hitConn.HasValue)
+            {
+                // 接続線上での右クリック
+                var conn = hitConn.Value;
+                menu.AddItem(new GUIContent("接続を解除"), false, () =>
+                {
+                    PushUndo();
+                    var parentNd = _treeData?.nodes.Find(n => n.guid == conn.parentGuid);
+                    if (parentNd != null)
+                    {
+                        if (conn.isDecorator)
+                            parentNd.childGuid = null;
+                        else
+                            parentNd.childrenGuids.Remove(conn.childGuid);
+                    }
+                    MarkDirty();
+                    Repaint();
+                });
             }
             else
             {
@@ -1064,6 +1084,60 @@ namespace ModuTree.Editor.Windows
                 if (GraphToScreen(r).Contains(screenPos)) return nd.guid;
             }
             return null;
+        }
+
+        /// <summary>スクリーン座標が接続線の近くにあるか判定し、接続情報を返す</summary>
+        private (string parentGuid, string childGuid, bool isDecorator)? HitTestConnection(Vector2 screenPos)
+        {
+            if (_treeData == null) return null;
+            const float threshold = 8f;
+            const int   samples   = 20;
+
+            foreach (var nd in _treeData.nodes)
+            {
+                if (!_nodeRects.TryGetValue(nd.guid, out var parentRect)) continue;
+                var parentScreen = GraphToScreen(parentRect);
+
+                for (int i = 0; i < nd.childrenGuids.Count; i++)
+                {
+                    var childGuid = nd.childrenGuids[i];
+                    if (!_nodeRects.TryGetValue(childGuid, out var childRect)) continue;
+                    var childScreen = GraphToScreen(childRect);
+
+                    var from = new Vector2(parentScreen.center.x, parentScreen.yMax);
+                    var to   = new Vector2(childScreen.center.x,  childScreen.y);
+                    if (IsNearBezier(screenPos, from, to, threshold, samples))
+                        return (nd.guid, childGuid, false);
+                }
+
+                if (!string.IsNullOrEmpty(nd.childGuid) &&
+                    _nodeRects.TryGetValue(nd.childGuid, out var decChildRect))
+                {
+                    var decChildScreen = GraphToScreen(decChildRect);
+                    var from = new Vector2(parentScreen.center.x, parentScreen.yMax);
+                    var to   = new Vector2(decChildScreen.center.x, decChildScreen.y);
+                    if (IsNearBezier(screenPos, from, to, threshold, samples))
+                        return (nd.guid, nd.childGuid, true);
+                }
+            }
+            return null;
+        }
+
+        private static bool IsNearBezier(Vector2 point, Vector2 from, Vector2 to, float threshold, int samples)
+        {
+            float dist = Mathf.Abs(to.y - from.y) * 0.5f;
+            var p1 = from + Vector2.up   * dist;
+            var p2 = to   + Vector2.down * dist;
+
+            for (int i = 0; i <= samples; i++)
+            {
+                float t  = i / (float)samples;
+                float u  = 1f - t;
+                var   bp = u*u*u * from + 3f*u*u*t * p1 + 3f*u*t*t * p2 + t*t*t * to;
+                if (Vector2.Distance(point, bp) <= threshold)
+                    return true;
+            }
+            return false;
         }
 
         private bool IsNearConnector(Vector2 screenPos, string guid, bool bottom)
