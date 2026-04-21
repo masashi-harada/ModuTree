@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using ModuTree.Runtime.Core;
 using ModuTree.Runtime.Engine;
 using ModuTree.Runtime.Nodes;
@@ -18,10 +19,11 @@ namespace ModuTree.Editor.Windows
     public class BehaviourTreeEditorWindow : EditorWindow
     {
         // ─── 定数 ────────────────────────────────────────────
-        private const float NodeWidth   = 200f;
-        private const float NodeHeight  = 60f;
-        private const float HeaderHeight = 22f;
-        private const float GridSize    = 20f;
+        private const float NodeWidth     = 200f;
+        private const float NodeHeight    = 60f;
+        private const float HeaderHeight  = 22f;
+        private const float GridSize      = 20f;
+        private const float InspectorWidth = 280f;
 
         // ノード状態別カラー
         private static readonly Color ColorIdle    = new Color(0.25f, 0.25f, 0.25f);
@@ -81,6 +83,9 @@ namespace ModuTree.Editor.Windows
         // サブツリー表示スタック（ダブルクリック対応）
         private Stack<(BehaviourTreeData data, string path)> _subTreeStack = new();
 
+        // インスペクタパネル
+        private Vector2 _inspectorScrollPos;
+
         // ─── ライフサイクル ───────────────────────────────────
 
         private void OnEnable()
@@ -121,8 +126,11 @@ namespace ModuTree.Editor.Windows
             DrawBackground();
             DrawToolbar();
 
-            // グラフ領域（ツールバー下）
-            var graphRect = new Rect(0, HeaderHeight, position.width, position.height - HeaderHeight);
+            float graphWidth  = position.width - InspectorWidth;
+            float graphHeight = position.height - HeaderHeight;
+
+            // グラフ領域（左側）
+            var graphRect = new Rect(0, HeaderHeight, graphWidth, graphHeight);
             GUI.BeginClip(graphRect);
             {
                 DrawGrid(graphRect);
@@ -134,6 +142,14 @@ namespace ModuTree.Editor.Windows
             GUI.EndClip();
 
             HandleEvents(graphRect);
+
+            // セパレーター
+            EditorGUI.DrawRect(new Rect(graphWidth, HeaderHeight, 1f, graphHeight),
+                new Color(0.08f, 0.08f, 0.08f, 1f));
+
+            // インスペクタパネル（右側）
+            var inspRect = new Rect(graphWidth + 1f, HeaderHeight, InspectorWidth - 1f, graphHeight);
+            DrawInspectorPanel(inspRect);
 
             DrawStatusBar();
         }
@@ -434,6 +450,190 @@ namespace ModuTree.Editor.Windows
             DrawBorder(rect, new Color(0.3f, 0.6f, 1f, 0.6f), 1f);
         }
 
+        // ─── インスペクタパネル ──────────────────────────────
+
+        private void DrawInspectorPanel(Rect rect)
+        {
+            EditorGUI.DrawRect(rect, new Color(0.18f, 0.18f, 0.18f));
+            GUILayout.BeginArea(rect);
+            _inspectorScrollPos = EditorGUILayout.BeginScrollView(_inspectorScrollPos);
+
+            if (_treeData == null || _selected.Count == 0)
+            {
+                EditorGUILayout.Space(12);
+                EditorGUILayout.LabelField("ノードを選択してください",
+                    new GUIStyle(EditorStyles.centeredGreyMiniLabel) { wordWrap = true });
+                EditorGUILayout.EndScrollView();
+                GUILayout.EndArea();
+                return;
+            }
+
+            if (_selected.Count > 1)
+            {
+                EditorGUILayout.Space(12);
+                EditorGUILayout.LabelField($"{_selected.Count} ノードを選択中",
+                    EditorStyles.centeredGreyMiniLabel);
+                EditorGUILayout.EndScrollView();
+                GUILayout.EndArea();
+                return;
+            }
+
+            var guid = _selected.First();
+            var nd   = _treeData.nodes.Find(n => n.guid == guid);
+            if (nd == null)
+            {
+                EditorGUILayout.EndScrollView();
+                GUILayout.EndArea();
+                return;
+            }
+
+            var type = Type.GetType(nd.typeName);
+            var meta = type?.GetCustomAttributes(typeof(BehaviourNodeMetaAttribute), false)
+                            .FirstOrDefault() as BehaviourNodeMetaAttribute;
+
+            EditorGUILayout.Space(6);
+
+            // ── ノード名・カテゴリ ─────────────────────────
+            EditorGUILayout.LabelField(meta?.DisplayName ?? GetShortTypeName(nd.typeName),
+                new GUIStyle(EditorStyles.boldLabel) { wordWrap = true, fontSize = 13 });
+
+            if (meta != null)
+            {
+                EditorGUILayout.LabelField(
+                    meta.Category + (nd.guid == _treeData.rootGuid ? "  [Root]" : ""),
+                    EditorStyles.miniLabel);
+            }
+
+            // ── スクリプト参照 ────────────────────────────
+            if (type != null)
+            {
+                var script = Resources.FindObjectsOfTypeAll<MonoScript>()
+                                      .FirstOrDefault(s => s.GetClass() == type);
+                if (script != null)
+                {
+                    EditorGUI.BeginDisabledGroup(true);
+                    EditorGUILayout.ObjectField("Script", script, typeof(MonoScript), false);
+                    EditorGUI.EndDisabledGroup();
+                }
+            }
+
+            // ── 説明 ──────────────────────────────────────
+            if (!string.IsNullOrEmpty(meta?.Description))
+            {
+                EditorGUILayout.Space(2);
+                EditorGUILayout.HelpBox(meta.Description, MessageType.None);
+            }
+
+            // ── ランタイム状態 ────────────────────────────
+            if (_runtimeEngine != null &&
+                _runtimeEngine.NodeMap.TryGetValue(guid, out var rtNode))
+            {
+                EditorGUILayout.Space(4);
+                EditorGUILayout.LabelField("実行状態", EditorStyles.boldLabel);
+                var stateColor = rtNode.State switch
+                {
+                    NodeState.Running => new Color(0.2f, 1f, 0.2f),
+                    NodeState.Success => new Color(0.4f, 0.8f, 1f),
+                    NodeState.Failure => new Color(1f, 0.3f, 0.3f),
+                    _                 => Color.gray
+                };
+                var prev = GUI.color;
+                GUI.color = stateColor;
+                EditorGUILayout.LabelField("● " + rtNode.State.ToString(), EditorStyles.boldLabel);
+                GUI.color = prev;
+            }
+
+            EditorGUILayout.Space(6);
+
+            // ── パラメータ ────────────────────────────────
+            EditorGUILayout.LabelField("パラメータ", EditorStyles.boldLabel);
+
+            if (type != null)
+            {
+                var instance = Activator.CreateInstance(type);
+                if (!string.IsNullOrEmpty(nd.parametersJson))
+                    MiniJson.PopulateFields(nd.parametersJson, instance);
+
+                EditorGUI.BeginChangeCheck();
+                DrawInspectorFields(instance, type);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    PushUndo();
+                    nd.parametersJson = MiniJson.SerializeFields(instance);
+                    MarkDirty();
+                }
+            }
+            else
+            {
+                EditorGUILayout.HelpBox($"型が見つかりません:\n{nd.typeName}", MessageType.Warning);
+            }
+
+            // ── GUID（折りたたみ不要な補足情報） ─────────
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("GUID", nd.guid, EditorStyles.miniLabel);
+
+            EditorGUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private void DrawInspectorFields(object instance, Type type)
+        {
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
+            foreach (var field in fields)
+            {
+                if (field.GetCustomAttribute<NodeFieldHideAttribute>() != null) continue;
+
+                var nodeField = field.GetCustomAttribute<NodeFieldAttribute>();
+                var label     = nodeField?.Label ?? ObjectNames.NicifyVariableName(field.Name);
+                var tooltip   = nodeField?.Tooltip ?? "";
+                var content   = new GUIContent(label, tooltip);
+
+                var value    = field.GetValue(instance);
+                var newValue = DrawInspectorField(content, value, field.FieldType, field.Name);
+                field.SetValue(instance, newValue);
+            }
+        }
+
+        private static object DrawInspectorField(GUIContent label, object value, Type type, string fieldName)
+        {
+            if (type == typeof(int))
+                return EditorGUILayout.IntField(label, value is int i ? i : 0);
+            if (type == typeof(float))
+                return EditorGUILayout.FloatField(label, value is float f ? f : 0f);
+            if (type == typeof(double))
+                return (double)EditorGUILayout.DoubleField(label, value is double d ? d : 0.0);
+            if (type == typeof(bool))
+                return EditorGUILayout.Toggle(label, value is bool b && b);
+            if (type == typeof(string))
+            {
+                // パス・JSONフィールドはファイル選択ボタン付きで表示
+                var lower = fieldName.ToLower();
+                if (lower.Contains("path") || lower.Contains("json"))
+                {
+                    EditorGUILayout.LabelField(label);
+                    EditorGUILayout.BeginHorizontal();
+                    var strVal = EditorGUILayout.TextField(value as string ?? "");
+                    if (GUILayout.Button("…", GUILayout.Width(28)))
+                    {
+                        var picked = EditorUtility.OpenFilePanel("BehaviourTree JSON を選択",
+                            Application.dataPath, "json");
+                        if (!string.IsNullOrEmpty(picked)) strVal = picked;
+                        GUI.FocusControl(null);
+                    }
+                    EditorGUILayout.EndHorizontal();
+                    return strVal;
+                }
+                return EditorGUILayout.TextField(label, value as string ?? "");
+            }
+            if (type.IsEnum)
+                return EditorGUILayout.EnumPopup(label,
+                    value is Enum e ? e : (Enum)Activator.CreateInstance(type));
+
+            // その他: 読み取り専用
+            EditorGUILayout.LabelField(label, value?.ToString() ?? "null");
+            return value;
+        }
+
         // ─── ステータスバー ───────────────────────────────────
 
         private void DrawStatusBar()
@@ -558,6 +758,9 @@ namespace ModuTree.Editor.Windows
 
         private void HandleMouseDown(Event e, Vector2 mousePos)
         {
+            // インスペクタパネル内のクリックはグラフ操作を行わない
+            if (mousePos.x >= position.width - InspectorWidth) return;
+
             if (e.button == 0) // 左クリック
             {
                 var hitGuid = HitTestNode(mousePos);
@@ -605,6 +808,14 @@ namespace ModuTree.Editor.Windows
                 }
                 else
                 {
+                    // トリプルクリック（背景）: Rootノードを中心にビューをリセット
+                    if (e.clickCount >= 3)
+                    {
+                        FocusRootNode();
+                        e.Use();
+                        return;
+                    }
+
                     if (e.alt)
                     {
                         // Alt + 左ドラッグ: キャンバスパン
@@ -655,6 +866,7 @@ namespace ModuTree.Editor.Windows
                     nd.positionY = newPos.y;
                     _nodeRects[guid] = new Rect(newPos, new Vector2(NodeWidth, NodeHeight));
                 }
+                SortChildrenByPosition();
                 MarkDirty();
                 Repaint();
                 e.Use();
@@ -777,7 +989,7 @@ namespace ModuTree.Editor.Windows
             {
                 if (_treeData == null)
                 {
-                    menu.AddItem(new GUIContent("新規ツリーを作成"), false, () => CreateNewTree(graphPos));
+                    menu.AddItem(new GUIContent("新規ツリーを作成"), false, () => CreateNewTree());
                 }
                 else
                 {
@@ -866,6 +1078,7 @@ namespace ModuTree.Editor.Windows
                 }
             }
 
+            SortChildrenByPosition();
             MarkDirty();
             Repaint();
         }
@@ -933,7 +1146,42 @@ namespace ModuTree.Editor.Windows
             Repaint();
         }
 
-        private void CreateNewTree(Vector2 graphPos)
+        /// <summary>Rootノードを画面中央に表示し、ズームを1.0にリセットする</summary>
+        private void FocusRootNode()
+        {
+            if (_treeData == null) return;
+
+            // 対象ノード: Rootがあればそれ、なければ全ノードの重心
+            Vector2 targetGraphPos;
+            if (!string.IsNullOrEmpty(_treeData.rootGuid) &&
+                _nodeRects.TryGetValue(_treeData.rootGuid, out var rootRect))
+            {
+                targetGraphPos = rootRect.center;
+            }
+            else if (_nodeRects.Count > 0)
+            {
+                targetGraphPos = _nodeRects.Values
+                    .Aggregate(Vector2.zero, (sum, r) => sum + r.center)
+                    / _nodeRects.Count;
+            }
+            else
+            {
+                _zoom      = 1f;
+                _panOffset = Vector2.zero;
+                Repaint();
+                return;
+            }
+
+            _zoom = 1f;
+            float graphWidth  = position.width - InspectorWidth;
+            float graphHeight = position.height - HeaderHeight;
+            // グラフ座標をスクリーン中央に合わせるパンオフセットを計算
+            _panOffset = new Vector2(graphWidth / 2f, graphHeight / 2f)
+                         - targetGraphPos * _zoom;
+            Repaint();
+        }
+
+        private void CreateNewTree()
         {
             var path = EditorUtility.SaveFilePanelInProject(
                 "新規BehaviourTree", "NewBehaviourTree", "json",
@@ -1070,6 +1318,7 @@ namespace ModuTree.Editor.Windows
             _selected.Clear();
             _undoStack.Clear();
             RebuildNodeRects();
+            SortChildrenByPosition();
         }
 
         private void RebuildNodeRects()
@@ -1225,14 +1474,25 @@ namespace ModuTree.Editor.Windows
             _isDirty = true;
         }
 
+        /// <summary>全CompositeノードのchildrenGuidsをX座標昇順（左優先）に並べ替える</summary>
+        private void SortChildrenByPosition()
+        {
+            if (_treeData == null) return;
+            foreach (var nd in _treeData.nodes)
+            {
+                if (nd.childrenGuids.Count <= 1) continue;
+                nd.childrenGuids.Sort((a, b) =>
+                {
+                    float ax = _nodeRects.TryGetValue(a, out var ra) ? ra.x : 0f;
+                    float bx = _nodeRects.TryGetValue(b, out var rb) ? rb.x : 0f;
+                    return ax.CompareTo(bx);
+                });
+            }
+        }
+
         private void NotifyInspector()
         {
-            // Inspector表示のためにInspectorWindowを更新
-            // 単体選択時のみInspectorに詳細を表示
-            if (_selected.Count == 1)
-            {
-                // 将来のInspector実装用フック
-            }
+            Repaint();
         }
     }
 }
