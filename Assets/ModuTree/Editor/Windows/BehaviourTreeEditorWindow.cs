@@ -605,12 +605,21 @@ namespace ModuTree.Editor.Windows
                 }
                 else
                 {
-                    // 空白クリック → 選択解除 + ボックス選択開始
-                    if (!e.shift) _selected.Clear();
-                    _isBoxSelecting  = true;
-                    _boxSelectStart  = mousePos;
-                    _boxSelectRect   = new Rect(mousePos, Vector2.zero);
-                    _isDraggingCanvas = false;
+                    if (e.alt)
+                    {
+                        // Alt + 左ドラッグ: キャンバスパン
+                        _isDraggingCanvas = true;
+                        _dragStart        = mousePos;
+                    }
+                    else
+                    {
+                        // 空白クリック → 選択解除 + ボックス選択開始
+                        if (!e.shift) _selected.Clear();
+                        _isBoxSelecting   = true;
+                        _boxSelectStart   = mousePos;
+                        _boxSelectRect    = new Rect(mousePos, Vector2.zero);
+                        _isDraggingCanvas = false;
+                    }
                     e.Use();
                 }
             }
@@ -632,7 +641,7 @@ namespace ModuTree.Editor.Windows
                 return;
             }
 
-            if (_isDraggingNodes && _selected.Count > 0)
+            if (_isDraggingNodes && _selected.Count > 0 && !e.alt)
             {
                 var delta = ScreenToGraph(mousePos) - ScreenToGraph(_dragStart);
                 foreach (var guid in _selected)
