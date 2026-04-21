@@ -1,0 +1,16 @@
+{
+    "name": "ModuTree.UnityIntegration",
+    "rootNamespace": "ModuTree.UnityIntegration",
+    "references": [
+        "GUID:280190d0648f94c2abb59f6e376fdffb"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

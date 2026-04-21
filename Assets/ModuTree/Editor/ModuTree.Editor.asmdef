@@ -1,0 +1,17 @@
+{
+    "name": "ModuTree.Editor",
+    "rootNamespace": "ModuTree.Editor",
+    "references": [
+        "ModuTree.Runtime",
+        "ModuTree.UnityIntegration"
+    ],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
