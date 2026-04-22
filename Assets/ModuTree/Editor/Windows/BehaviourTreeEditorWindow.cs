@@ -855,7 +855,8 @@ namespace ModuTree.Editor.Windows
                     else
                         _selected.Add(hitGuid);
 
-                    // ドラッグ準備
+                    // ドラッグ準備（開始前にUndoスナップショットを保存）
+                    PushUndo();
                     _isDraggingNodes  = true;
                     _dragStart        = mousePos;
                     _dragStartPositions.Clear();
