@@ -555,7 +555,7 @@ namespace ModuTree.Editor.Windows
                     MiniJson.PopulateFields(nd.parametersJson, instance);
 
                 EditorGUI.BeginChangeCheck();
-                DrawInspectorFields(instance, type);
+                DrawInspectorFields(instance, type, _savePath ?? "");
                 if (EditorGUI.EndChangeCheck())
                 {
                     PushUndo();
@@ -576,7 +576,7 @@ namespace ModuTree.Editor.Windows
             GUILayout.EndArea();
         }
 
-        private void DrawInspectorFields(object instance, Type type)
+        private void DrawInspectorFields(object instance, Type type, string basePath = "")
         {
             var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance);
             foreach (var field in fields)
@@ -589,12 +589,12 @@ namespace ModuTree.Editor.Windows
                 var content   = new GUIContent(label, tooltip);
 
                 var value    = field.GetValue(instance);
-                var newValue = DrawInspectorField(content, value, field.FieldType, field.Name);
+                var newValue = DrawInspectorField(content, value, field.FieldType, field.Name, basePath);
                 field.SetValue(instance, newValue);
             }
         }
 
-        private static object DrawInspectorField(GUIContent label, object value, Type type, string fieldName)
+        private static object DrawInspectorField(GUIContent label, object value, Type type, string fieldName, string basePath = "")
         {
             if (type == typeof(int))
                 return EditorGUILayout.IntField(label, value is int i ? i : 0);
@@ -606,21 +606,29 @@ namespace ModuTree.Editor.Windows
                 return EditorGUILayout.Toggle(label, value is bool b && b);
             if (type == typeof(string))
             {
-                // パス・JSONフィールドはファイル選択ボタン付きで表示
+                // パス・JSONフィールドはObjectField（D&D対応）で表示
                 var lower = fieldName.ToLower();
                 if (lower.Contains("path") || lower.Contains("json"))
                 {
+                    var strVal = value as string ?? "";
+
+                    // 相対パス → TextAsset に変換（表示用）
+                    TextAsset currentAsset = RelativePathToTextAsset(strVal, basePath);
+
                     EditorGUILayout.LabelField(label);
-                    EditorGUILayout.BeginHorizontal();
-                    var strVal = EditorGUILayout.TextField(value as string ?? "");
-                    if (GUILayout.Button("…", GUILayout.Width(28)))
+                    var newAsset = EditorGUILayout.ObjectField(
+                        currentAsset, typeof(TextAsset), false) as TextAsset;
+
+                    if (newAsset != currentAsset)
+                        strVal = newAsset != null ? TextAssetToRelativePath(newAsset, basePath) : "";
+
+                    // 相対パスを補足表示
+                    if (!string.IsNullOrEmpty(strVal))
                     {
-                        var picked = EditorUtility.OpenFilePanel("BehaviourTree JSON を選択",
-                            Application.dataPath, "json");
-                        if (!string.IsNullOrEmpty(picked)) strVal = picked;
-                        GUI.FocusControl(null);
+                        var pathStyle = new GUIStyle(EditorStyles.miniLabel) { wordWrap = true };
+                        EditorGUILayout.LabelField(strVal, pathStyle);
                     }
-                    EditorGUILayout.EndHorizontal();
+
                     return strVal;
                 }
                 return EditorGUILayout.TextField(label, value as string ?? "");
@@ -632,6 +640,58 @@ namespace ModuTree.Editor.Windows
             // その他: 読み取り専用
             EditorGUILayout.LabelField(label, value?.ToString() ?? "null");
             return value;
+        }
+
+        /// <summary>
+        /// 相対パス文字列からTextAssetを取得する。
+        /// basePath（親JSONの絶対パス）を基準に解決する。
+        /// 絶対パスの場合は後方互換としてそのまま使用する。
+        /// </summary>
+        private static TextAsset RelativePathToTextAsset(string relativePath, string basePath)
+        {
+            if (string.IsNullOrEmpty(relativePath)) return null;
+
+            string absolutePath;
+            if (Path.IsPathRooted(relativePath))
+            {
+                absolutePath = relativePath;
+            }
+            else if (!string.IsNullOrEmpty(basePath))
+            {
+                var baseDir = Path.GetDirectoryName(basePath) ?? "";
+                absolutePath = Path.GetFullPath(Path.Combine(baseDir, relativePath));
+            }
+            else return null;
+
+            // 絶対パス → "Assets/..." 形式に変換
+            var normalized  = absolutePath.Replace("\\", "/");
+            var projectRoot = Application.dataPath.Replace("\\", "/").Replace("/Assets", "/");
+            if (!normalized.StartsWith(projectRoot)) return null;
+            var assetPath = normalized.Substring(projectRoot.Length);
+            return AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
+        }
+
+        /// <summary>
+        /// TextAsset を basePath（親JSONの絶対パス）からの相対パスに変換する。
+        /// </summary>
+        private static string TextAssetToRelativePath(TextAsset asset, string basePath)
+        {
+            var assetRelPath = AssetDatabase.GetAssetPath(asset);
+            var absolutePath = Path.GetFullPath(
+                Path.Combine(Application.dataPath, "..", assetRelPath));
+
+            if (string.IsNullOrEmpty(basePath))
+                return absolutePath; // basePath未設定時は後方互換として絶対パス
+
+            var baseDir = Path.GetDirectoryName(basePath) ?? "";
+            if (string.IsNullOrEmpty(baseDir)) return absolutePath;
+
+            // Uri を使って相対パスを計算する
+            var fromUri = new Uri(baseDir.TrimEnd('/', '\\') + Path.DirectorySeparatorChar);
+            var toUri   = new Uri(absolutePath);
+            var rel     = fromUri.MakeRelativeUri(toUri);
+            return Uri.UnescapeDataString(rel.ToString())
+                      .Replace('/', Path.DirectorySeparatorChar);
         }
 
         // ─── ステータスバー ───────────────────────────────────
@@ -767,6 +827,14 @@ namespace ModuTree.Editor.Windows
 
                 if (hitGuid != null)
                 {
+                    // ダブルクリック: サブツリーを開く
+                    if (e.clickCount == 2)
+                    {
+                        TryOpenSubTree(hitGuid);
+                        e.Use();
+                        return;
+                    }
+
                     // コネクタ付近をクリック → 接続ドラッグ開始
                     if (IsNearConnector(mousePos, hitGuid, bottom: true))
                     {
@@ -911,15 +979,6 @@ namespace ModuTree.Editor.Windows
                 Repaint();
                 e.Use();
                 return;
-            }
-
-            // ダブルクリック：サブツリーを開く
-            if (e.clickCount == 2 && e.button == 0)
-            {
-                var guid = HitTestNode(mousePos);
-                if (guid != null)
-                    TryOpenSubTree(guid);
-                e.Use();
             }
 
             _isDraggingNodes  = false;
@@ -1122,19 +1181,31 @@ namespace ModuTree.Editor.Windows
                 MiniJson.PopulateFields(nd.parametersJson, tmp);
 
             var subNode = tmp as SubTreeNodeData;
-            if (subNode == null || string.IsNullOrEmpty(subNode.subTreeJsonPath)) return;
-
-            if (!File.Exists(subNode.subTreeJsonPath))
+            if (subNode == null || string.IsNullOrEmpty(subNode.subTreeJsonPath))
             {
-                Debug.LogWarning($"[ModuTree] サブツリーJSONが見つかりません: {subNode.subTreeJsonPath}");
+                Debug.LogWarning("[ModuTree] サブツリーのJSONパスが設定されていません。インスペクタパネルで subTreeJsonPath を設定してください。");
+                return;
+            }
+
+            // 相対パスを絶対パスに解決（savePath基準）
+            var resolvedPath = subNode.subTreeJsonPath;
+            if (!Path.IsPathRooted(resolvedPath) && !string.IsNullOrEmpty(_savePath))
+            {
+                var baseDir = Path.GetDirectoryName(_savePath) ?? "";
+                resolvedPath = Path.GetFullPath(Path.Combine(baseDir, resolvedPath));
+            }
+
+            if (!File.Exists(resolvedPath))
+            {
+                Debug.LogWarning($"[ModuTree] サブツリーJSONが見つかりません: {resolvedPath}  (元パス: {subNode.subTreeJsonPath})");
                 return;
             }
 
             // 現在のツリーをスタックに積む
             _subTreeStack.Push((_treeData, _savePath));
 
-            var subJson = File.ReadAllText(subNode.subTreeJsonPath);
-            LoadTree(BehaviourTreeSerializer.FromJson(subJson), subNode.subTreeJsonPath);
+            var subJson = File.ReadAllText(resolvedPath);
+            LoadTree(BehaviourTreeSerializer.FromJson(subJson), resolvedPath);
             Repaint();
         }
 

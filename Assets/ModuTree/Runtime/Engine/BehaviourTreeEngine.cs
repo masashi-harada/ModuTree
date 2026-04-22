@@ -17,8 +17,11 @@ namespace ModuTree.Runtime.Engine
     {
         // ─── プロパティ ──────────────────────────────────────
 
-        public Blackboard Blackboard { get; }
-        public NodeState  State      { get; private set; } = NodeState.Idle;
+        public Blackboard Blackboard    { get; }
+        public NodeState  State         { get; private set; } = NodeState.Idle;
+
+        /// <summary>このツリーJSONのベースディレクトリ（サブツリーの相対パス解決用）</summary>
+        public string BaseDirectory { get; private set; } = "";
 
         /// <summary>GUID→ノードインスタンスのマップ（エディタのモニタリング用）</summary>
         public IReadOnlyDictionary<string, BehaviourNodeData> NodeMap => _nodeMap;
@@ -40,12 +43,18 @@ namespace ModuTree.Runtime.Engine
         // ─── 初期化 ──────────────────────────────────────────
 
         /// <summary>JSON文字列からツリーを初期化する</summary>
-        public void Initialize(string json)
-            => Initialize(BehaviourTreeSerializer.FromJson(json));
+        /// <param name="json">JSONテキスト</param>
+        /// <param name="baseDirectory">JSONファイルがあるディレクトリ（相対パス解決用）</param>
+        public void Initialize(string json, string baseDirectory = "")
+            => Initialize(BehaviourTreeSerializer.FromJson(json), baseDirectory);
 
         /// <summary>BehaviourTreeDataからツリーを初期化する</summary>
-        public void Initialize(BehaviourTreeData treeData)
+        /// <param name="treeData">ツリーデータ</param>
+        /// <param name="baseDirectory">JSONファイルがあるディレクトリ（相対パス解決用）</param>
+        public void Initialize(BehaviourTreeData treeData, string baseDirectory = "")
         {
+            BaseDirectory = baseDirectory ?? "";
+
             _cts?.Cancel();
             _cts?.Dispose();
             _cts = new CancellationTokenSource();
@@ -59,6 +68,7 @@ namespace ModuTree.Runtime.Engine
             _nodeMap  = new Dictionary<string, BehaviourNodeData>(nodeMap);
 
             BindBlackboard();
+            BindBaseDirectory();
 
             // 全ノードをIdleに初期化
             _rootNode?.ResetState();
@@ -141,6 +151,13 @@ namespace ModuTree.Runtime.Engine
         {
             foreach (var node in _nodeMap.Values)
                 node.Blackboard = Blackboard;
+        }
+
+        /// <summary>全ノードにBaseDirectoryをバインドする</summary>
+        private void BindBaseDirectory()
+        {
+            foreach (var node in _nodeMap.Values)
+                node.BaseDirectory = BaseDirectory;
         }
     }
 }

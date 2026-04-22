@@ -1,3 +1,4 @@
+using System.IO;
 using System.Threading;
 using ModuTree.Runtime.Core;
 using ModuTree.Runtime.Engine;
@@ -17,6 +18,10 @@ namespace ModuTree.UnityIntegration
         [Header("BehaviourTree JSON")]
         public TextAsset behaviourTreeJson;
 
+        // JSONファイルのベースディレクトリ（相対パス解決用）
+        // OnValidate で自動更新されるため手動編集不要
+        [SerializeField, HideInInspector] private string _baseDirectory = "";
+
         /// <summary>エンジンへのアクセス</summary>
         public BehaviourTreeEngine Engine { get; private set; }
 
@@ -34,8 +39,29 @@ namespace ModuTree.UnityIntegration
             _cts   = new CancellationTokenSource();
             Engine = new BehaviourTreeEngine();
             SetupBlackboard(Engine.Blackboard);
-            Engine.Initialize(behaviourTreeJson.text);
+            Engine.Initialize(behaviourTreeJson.text, _baseDirectory);
         }
+
+#if UNITY_EDITOR
+        protected virtual void OnValidate()
+        {
+            // behaviourTreeJsonのアセットパスからベースディレクトリを更新する
+            if (behaviourTreeJson != null)
+            {
+                var assetPath = UnityEditor.AssetDatabase.GetAssetPath(behaviourTreeJson);
+                if (!string.IsNullOrEmpty(assetPath))
+                {
+                    var absPath = Path.GetFullPath(
+                        Path.Combine(Application.dataPath, "..", assetPath));
+                    _baseDirectory = Path.GetDirectoryName(absPath) ?? "";
+                }
+            }
+            else
+            {
+                _baseDirectory = "";
+            }
+        }
+#endif
 
         protected virtual async void Update()
         {
@@ -63,7 +89,7 @@ namespace ModuTree.UnityIntegration
         /// </summary>
         public void ReloadJson(string json)
         {
-            Engine?.Initialize(json);
+            Engine?.Initialize(json, _baseDirectory);
         }
     }
 }

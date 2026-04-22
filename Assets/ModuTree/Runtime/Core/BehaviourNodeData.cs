@@ -23,6 +23,12 @@ namespace ModuTree.Runtime.Core
         /// <summary>共有Blackboard（エンジンから注入）</summary>
         [NodeFieldHide] public Blackboard Blackboard { get; internal set; }
 
+        /// <summary>
+        /// このノードが属するツリーJSONのベースディレクトリ（相対パス解決用）。
+        /// エンジンから注入される。
+        /// </summary>
+        [NodeFieldHide] internal string BaseDirectory { get; set; } = "";
+
         // ─── 非同期実行API（基本）────────────────────────────
 
         /// <summary>
