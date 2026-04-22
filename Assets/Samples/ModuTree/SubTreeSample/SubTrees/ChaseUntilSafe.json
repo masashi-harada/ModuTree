@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "rootGuid": "c3d4e5f6-0201-0000-0000-000000000000",
+  "nodes": [
+    {
+      "guid": "c3d4e5f6-0201-0000-0000-000000000000",
+      "typeName": "ModuTree.Runtime.Nodes.SequenceNodeData, ModuTree.Runtime",
+      "positionX": 200.0,
+      "positionY": 50.0,
+      "childrenGuids": [
+        "c3d4e5f6-0202-0000-0000-000000000000"
+      ],
+      "childGuid": null,
+      "parametersJson": "{}"
+    },
+    {
+      "guid": "c3d4e5f6-0202-0000-0000-000000000000",
+      "typeName": "ModuTree.SubTreeSample.ChaseAndReturnAction, ModuTree.SubTreeSample",
+      "positionX": 200.0,
+      "positionY": 200.0,
+      "childrenGuids": [],
+      "childGuid": null,
+      "parametersJson": "{\"chaseSpeed\":3.5,\"chaseRange\":10.0}"
+    }
+  ]
+}
