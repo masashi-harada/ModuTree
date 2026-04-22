@@ -1,0 +1,17 @@
+{
+    "name": "ModuTree.JankenSample",
+    "rootNamespace": "ModuTree.JankenSample",
+    "references": [
+        "ModuTree.Runtime",
+        "ModuTree.UnityIntegration"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
