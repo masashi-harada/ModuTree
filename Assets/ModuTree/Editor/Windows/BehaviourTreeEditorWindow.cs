@@ -293,6 +293,20 @@ namespace ModuTree.Editor.Windows
             var dispName  = meta?.DisplayName ?? typeName;
             var category  = meta?.Category ?? "?";
 
+            // SubTreeノードはファイル名を表示名として使う
+            var nodeType = Type.GetType(nd.typeName);
+            if (nodeType != null && typeof(SubTreeNodeData).IsAssignableFrom(nodeType)
+                && !string.IsNullOrEmpty(nd.parametersJson))
+            {
+                var tmp = Activator.CreateInstance(nodeType) as SubTreeNodeData;
+                if (tmp != null)
+                {
+                    MiniJson.PopulateFields(nd.parametersJson, tmp);
+                    if (!string.IsNullOrEmpty(tmp.subTreeJsonPath))
+                        dispName = Path.GetFileNameWithoutExtension(tmp.subTreeJsonPath);
+                }
+            }
+
             float fontSize = Mathf.Clamp(_zoom * 11f, 8f, 14f);
 
             // カテゴリ帯
