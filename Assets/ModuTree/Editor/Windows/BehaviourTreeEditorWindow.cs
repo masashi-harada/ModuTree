@@ -19,7 +19,7 @@ namespace ModuTree.Editor.Windows
     public class BehaviourTreeEditorWindow : EditorWindow
     {
         // ─── 定数 ────────────────────────────────────────────
-        private const float NodeWidth     = 200f;
+        private const float NodeWidth     = 140f;
         private const float NodeHeight    = 60f;
         private const float HeaderHeight  = 22f;
         private const float GridSize      = 20f;
