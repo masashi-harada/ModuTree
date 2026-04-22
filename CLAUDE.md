@@ -38,13 +38,31 @@ Assets/
 │
 └── Samples/
     └── ModuTree/
-        └── BasicSample/            # サンプル実装（敵AI）
-            ├── ModuTree.Samples.asmdef
-            ├── Keys/               # Blackboard 型安全キー定義
-            ├── Nodes/              # サンプルノード
-            ├── SampleEnemyRunner.cs
-            ├── SamplePlayerController.cs
-            └── EnemyBehaviourTree.json
+        ├── BasicSample/            # リアルタイムAIサンプル（敵の追跡・パトロール）
+        │   ├── ModuTree.Samples.asmdef
+        │   ├── Keys/
+        │   ├── Nodes/
+        │   ├── SampleEnemyRunner.cs
+        │   ├── SamplePlayerController.cs
+        │   └── EnemyBehaviourTree.json
+        │
+        ├── SubTreeSample/          # サブツリーサンプル（警備員AI）
+        │   ├── ModuTree.SubTreeSample.asmdef
+        │   ├── Keys/               # SentryBBKeys.cs
+        │   ├── Nodes/              # IsPlayerSpottedCondition / RandomPatrolAction / ChaseAndReturnAction
+        │   ├── SentryRunner.cs
+        │   ├── SentryPlayerController.cs
+        │   ├── AlertGuardBehaviourTree.json
+        │   └── SubTrees/
+        │       ├── Patrol.json
+        │       └── ChaseUntilSafe.json
+        │
+        └── JankenSample/           # ワンショット実行サンプル（ジャンケンAI）
+            ├── ModuTree.JankenSample.asmdef
+            ├── Keys/               # JankenBBKeys.cs（JankenHand enum を含む）
+            ├── Nodes/              # IsPlayerChoseCondition / SelectHandAction
+            ├── JankenRunner.cs
+            └── JankenBehaviourTree.json
 ```
 
 ---
@@ -66,7 +84,7 @@ JSON → BehaviourTreeSerializer.Build()
   ↓
 BehaviourNodeData ツリー構築（Guid付き）
   ↓
-BehaviourTreeEngine.UpdateAsync() を毎フレーム呼び出し
+BehaviourTreeEngine.UpdateAsync() を呼び出し
   ↓
 Node: OnStartAsync() → OnUpdateAsync() → OnStopAsync()
   ↓
@@ -88,6 +106,25 @@ if (result != NodeState.Running)
 }
 ```
 
+### SequenceNodeData の1ステップ進行
+
+`SequenceNodeData` は子ノードが Success を返すたびに **Running を返して次フレームへ委ねる**設計。
+1回の `UpdateAsync()` 呼び出しで1子ノード分しか進まない。
+
+- **リアルタイム用途（毎フレーム実行）**: `Update()` で毎フレーム `UpdateAsync()` を呼ぶ → 自然に動作
+- **ワンショット用途（1回で完結させたい場合）**: `Running` でなくなるまでループする
+
+```csharp
+// ワンショット実行パターン
+Engine.Reset();
+NodeState state;
+do
+{
+    state = await Engine.UpdateAsync(ct);
+}
+while (state == NodeState.Running && !ct.IsCancellationRequested);
+```
+
 ### ホットリロード
 
 実行中に JSON を差し替えると全ノードをリセットして即座に切り替わる。
@@ -105,7 +142,7 @@ engine.Initialize(newJsonText);  // Engine直接
 ### ノード型の階層
 
 ```
-BehaviourNodeData（抽象基底）  ← Guid, State, Blackboard を持つ
+BehaviourNodeData（抽象基底）  ← Guid, State, Blackboard, BaseDirectory を持つ
 ├── ActionNodeData（抽象）              namespace: ModuTree.Runtime.Nodes
 ├── ConditionNodeData（抽象）           namespace: ModuTree.Runtime.Nodes
 ├── CompositeNodeData（抽象）           namespace: ModuTree.Runtime.Nodes
@@ -138,9 +175,22 @@ BehaviourNodeData（抽象基底）  ← Guid, State, Blackboard を持つ
 
 別のAIデータ（JSONファイル）を参照し、親ツリーからはActionノードのように振る舞う。
 
-- `subTreeJsonPath` フィールドに**絶対パス**で参照JSONを指定
+- `subTreeJsonPath` フィールドに**親JSONからの相対パス**で参照JSONを指定（例: `"SubTrees/Patrol.json"`）
 - 親ツリーの `Blackboard` を共有する
+- `BaseDirectory` は Engine が初期化時に全ノードへ自動バインドする
 - エディタ上でダブルクリックするとサブツリーの中を表示できる
+- エディタのノード名には参照ファイル名（拡張子なし）が表示される
+
+### BehaviourTreeEngine の BaseDirectory
+
+サブツリーの相対パス解決のため、エンジンにベースディレクトリを渡す。
+
+```csharp
+// JSON ファイルのあるディレクトリを渡す
+engine.Initialize(jsonText, baseDirectory);
+```
+
+`BehaviourTreeRunner` は `OnValidate()` で TextAsset のパスから自動計算して保持する。
 
 ---
 
@@ -190,7 +240,7 @@ var agent = Blackboard.Get(MyBBKeys.Agent);
 Blackboard.Set(MyBBKeys.Distance, Vector3.Distance(pos1, pos2));
 ```
 
-### BehaviourTreeRunner の継承（Unity）
+### BehaviourTreeRunner の継承（リアルタイム用途）
 
 `BehaviourTreeRunner` を継承して `SetupBlackboard()` をオーバーライドする。
 **ノード内では Unity API（Transform.Translate 等）を直接呼ばない**。
@@ -219,6 +269,39 @@ public class EnemyRunner : BehaviourTreeRunner
 }
 ```
 
+### BehaviourTreeRunner の継承（ワンショット用途）
+
+コマンドバトルのように「1ターンに1回だけAIを動かす」場合は `Update()` を無効化し、
+任意のタイミングでループ実行する。
+
+```csharp
+public class MyTurnRunner : BehaviourTreeRunner
+{
+    protected override void SetupBlackboard(Blackboard blackboard)
+    {
+        // 初期値をセット
+    }
+
+    /// <summary>毎フレームの自動実行を無効化</summary>
+    protected override void Update() { }
+
+    /// <summary>ターン開始時に呼ぶ</summary>
+    public async void ExecuteTurn()
+    {
+        Engine.Reset();
+        NodeState state;
+        do
+        {
+            state = await Engine.UpdateAsync(_cts.Token);
+        }
+        while (state == NodeState.Running && !_cts.Token.IsCancellationRequested);
+    }
+}
+```
+
+`BehaviourTreeRunner` を継承することで、Play中に Hierarchy で GameObject を選択すると
+ModuTree Editor ウィンドウでノードの実行状態をリアルタイムに確認できる。
+
 ---
 
 ## コーディング規約
@@ -244,7 +327,18 @@ public class EnemyRunner : BehaviourTreeRunner
 | `ModuTree.Runtime` | ランタイムコア（Unity 非依存、`noEngineReferences: true`） |
 | `ModuTree.UnityIntegration` | Unity用 MonoBehaviour（`BehaviourTreeRunner`） |
 | `ModuTree.Editor` | エディター拡張（Editor専用） |
-| `ModuTree.Samples` | サンプル実装 |
+| `ModuTree.Samples` | BasicSample |
+| `ModuTree.SubTreeSample` | SubTreeSample |
+| `ModuTree.JankenSample` | JankenSample |
+
+### MiniJson の enum シリアライズ
+
+enum は**整数値**として保存・復元される。`parametersJson` に書く際も数値で指定する。
+
+```json
+{ "targetHand": 0 }   // JankenHand.Rock = 0
+{ "hand": 2 }         // JankenHand.Paper = 2
+```
 
 ---
 
@@ -279,35 +373,47 @@ public class EnemyRunner : BehaviourTreeRunner
 | 操作 | 内容 |
 |------|------|
 | `Window > ModuTree > BehaviourTree Editor` | エディターウィンドウを開く |
-| 右クリック（空白） | ノード追加メニュー（Rootがない場合はComposite系のみ） |
-| ノード中央をドラッグ | ノード移動 |
+| 右クリック（空白） | ノード追加メニュー（Rootがない場合はComposite系のみ）／接続ライン上で右クリックで接続解除 |
+| ノード中央をドラッグ | ノード移動（左右位置が子の実行順に反映される） |
+| `Alt` + ドラッグ | キャンバスのパン（スライド移動） |
 | ノードの上端/下端をドラッグ | 別ノードへの接続 |
-| ノード単体クリック | Inspector にパラメータを表示 |
+| ノード単体クリック | 右パネル（Inspector）にパラメータを表示・編集 |
 | 空白ドラッグ | ボックス選択（複数選択） |
 | `⌘S` / `Ctrl+S` | 保存（元のJSONファイルを上書き） |
 | 別名保存ボタン | 別ファイルとして保存（Variant作成に便利） |
-| `⌘Z` / `Ctrl+Z` | Undo |
+| `⌘Z` / `Ctrl+Z` | Undo（ノード追加・削除・移動・接続変更） |
 | `⌘C` / `⌘X` / `⌘V` | コピー / カット / ペースト |
-| `Delete` / `Backspace` | 選択ノードを削除 |
+| ノード右クリック | 削除メニュー（単体または複数選択まとめて削除） |
 | スクロール | ズームイン/アウト |
+| 背景をトリプルクリック | Rootノードを中心にズーム1.0でリセット |
 | SubTreeノードをダブルクリック | サブツリーの中を表示 |
 | Play中にHierarchyでRunnerを選択 | 実行中ノードをリアルタイムで視覚確認 |
+
+### Inspector パネル（右側 280px）
+
+- ノードのスクリプト参照（クリックで選択）
+- パラメータのインライン編集
+- SubTree ノードの参照ファイルは Project ビューからドラッグ＆ドロップでセット可能
 
 ---
 
 ## 注意事項・既知の問題
 
 - **ReactiveSelectorNodeData** は低優先度のノードが実行中の場合のみ高優先度ノードをプローブする。高優先度自体が実行中の場合は再プローブしない
+- **SequenceNodeData の Running 返却**: 子が Success を返した次の子はその同フレームでは実行されない。ワンショット実行ではループが必要（前述）
 - ノード生成は `Activator.CreateInstance(type)` によるリフレクションを使用。`typeName` を変更すると既存JSONが壊れる
 - `DecoratorNodeData` は抽象クラスのみ。組み込み実装は存在しないためユーザーが実装する
-- `SubTreeNodeData` は `subTreeJsonPath` に**絶対パス**を指定する。相対パスは未対応
+- `SubTreeNodeData` の `subTreeJsonPath` は親JSONファイルからの**相対パス**を指定する
 - `[NodeFieldHide]` は `AttributeTargets.Field | Property` の両方に付与可能
+- Delete/Backspace キーによるノード削除は無効。削除は右クリックメニューから行う
 
 ---
 
-## サンプルの動作確認
+## サンプル一覧
 
-`Assets/Samples/ModuTree/BasicSample/EnemyBehaviourTree.json` に以下のツリーが定義されている。
+### BasicSample — リアルタイム敵AI
+
+`Assets/Samples/ModuTree/BasicSample/EnemyBehaviourTree.json`
 
 ```
 ReactiveSelectorNodeData（ルート）
@@ -327,3 +433,56 @@ ReactiveSelectorNodeData（ルート）
 2. プレイヤーに `SamplePlayerController` をアタッチ
 3. 敵に `SampleEnemyRunner` をアタッチ、`EnemyBehaviourTree.json` と Player を設定
 4. カメラを `(0, 15, 0)` / Rotation `(90, 0, 0)` の見下ろし配置
+
+---
+
+### SubTreeSample — サブツリーによる警備員AI
+
+`Assets/Samples/ModuTree/SubTreeSample/AlertGuardBehaviourTree.json`
+
+```
+ReactiveSelectorNodeData（ルート）
+├── SequenceNodeData
+│   ├── IsPlayerSpottedCondition（detectRange: 5m）
+│   └── SubTreeNodeData → SubTrees/ChaseUntilSafe.json
+│         └── ChaseAndReturnAction（chaseSpeed: 3.5 / chaseRange: 10m）
+└── SubTreeNodeData → SubTrees/Patrol.json
+      └── RandomPatrolAction（patrolSpeed: 2.0 / arriveDistance: 0.5）
+```
+
+**ポイント:**
+- サブツリーのパスは親JSONからの相対パス（`"SubTrees/Patrol.json"` など）
+- 親の Blackboard をサブツリーと共有
+- `SentryRunner` が `BehaviourTreeRunner` を継承し Blackboard 経由で移動を適用
+
+**シーンセットアップ:**
+1. Plane（地面）、Capsule×2（プレイヤー・警備員）を配置
+2. プレイヤーに `SentryPlayerController` をアタッチ
+3. 警備員に `SentryRunner` をアタッチ、`AlertGuardBehaviourTree.json` と Player を設定
+
+---
+
+### JankenSample — ワンショット実行（ジャンケンAI）
+
+`Assets/Samples/ModuTree/JankenSample/JankenBehaviourTree.json`
+
+```
+SelectorNodeData（ルート）
+├── SequenceNodeData
+│   ├── IsPlayerChoseCondition（targetHand: Rock）
+│   └── SelectHandAction（hand: Paper）   → グーにはパーで勝ち
+├── SequenceNodeData
+│   ├── IsPlayerChoseCondition（targetHand: Scissors）
+│   └── SelectHandAction（hand: Rock）    → チョキにはグーで勝ち
+└── SelectHandAction（hand: Scissors）    → パーにはチョキで勝ち（デフォルト）
+```
+
+**ポイント:**
+- `JankenRunner` は `BehaviourTreeRunner` を継承し `Update()` を空でオーバーライド
+- ボタン押下時に `Engine.Reset()` → Running でなくなるまで `UpdateAsync()` をループ
+- Play中に Hierarchy で JankenRunner の GameObject を選択すると ModuTree Editor でノード遷移を確認できる
+
+**シーンセットアップ:**
+1. Canvas に Button×3（グー/チョキ/パー）、Text×2（ResultText/ThinkingText）を配置
+2. 空の GameObject に `JankenRunner` をアタッチ
+3. `JankenBehaviourTree.json`、各ボタン、各テキストを Inspector でセット
