@@ -794,12 +794,6 @@ namespace ModuTree.Editor.Windows
                 return;
             }
 
-            // Delete / Backspace: 選択ノード削除
-            if (e.keyCode == KeyCode.Delete || e.keyCode == KeyCode.Backspace)
-            {
-                DeleteSelected();
-                e.Use();
-            }
         }
 
         private void HandleScroll(Event e, Vector2 mousePos)
@@ -1008,8 +1002,12 @@ namespace ModuTree.Editor.Windows
                     Repaint();
                 });
 
-                menu.AddItem(new GUIContent("削除"), false, () =>
+                // 複数選択中は選択全体を削除、単体の場合はそのノードを削除
+                bool isMultiSelect = _selected.Count > 1 && _selected.Contains(hitGuid);
+                var deleteLabel = isMultiSelect ? $"選択中の {_selected.Count} ノードを削除" : "削除";
+                menu.AddItem(new GUIContent(deleteLabel), false, () =>
                 {
+                    if (!isMultiSelect) _selected.Clear();
                     _selected.Add(hitGuid);
                     DeleteSelected();
                 });
