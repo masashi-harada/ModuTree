@@ -1474,7 +1474,7 @@ namespace ModuTree.Editor.Windows
             var screenRect = GraphToScreen(r);
             var cy = bottom ? screenRect.yMax : screenRect.y;
             var cx = screenRect.center.x;
-            return Vector2.Distance(screenPos, new Vector2(cx, cy)) < 12f * _zoom;
+            return Vector2.Distance(screenPos, new Vector2(cx, cy)) < 22f * _zoom;
         }
 
         private Vector2 ScreenToGraph(Vector2 screenPos)
