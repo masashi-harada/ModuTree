@@ -1005,10 +1005,11 @@ namespace ModuTree.Editor.Windows
                     var nd = _treeData?.nodes.Find(n => n.guid == guid);
                     if (nd == null) continue;
 
-                    var newPos = startPos + delta;
-                    nd.positionX = newPos.x;
-                    nd.positionY = newPos.y;
-                    _nodeRects[guid] = new Rect(newPos, new Vector2(NodeWidth, NodeHeight));
+                    // グリッドにスナップしながら移動
+                    var snappedPos = SnapToGrid(startPos + delta);
+                    nd.positionX = snappedPos.x;
+                    nd.positionY = snappedPos.y;
+                    _nodeRects[guid] = new Rect(snappedPos, new Vector2(NodeWidth, NodeHeight));
                 }
                 SortChildrenByPosition();
                 Repaint();
@@ -1061,9 +1062,24 @@ namespace ModuTree.Editor.Windows
             _isBoxSelecting   = false;
             _isDraggingCanvas = false;
 
-            // ドロップ時点でノード位置を自動保存
             if (wasDraggingNodes && _selected.Count > 0)
+            {
+                // 単一ノードドロップ時のみ衝突回避（複数選択は相対位置を保持）
+                if (_selected.Count == 1)
+                {
+                    var guid = _selected.First();
+                    var nd   = _treeData?.nodes.Find(n => n.guid == guid);
+                    if (nd != null)
+                    {
+                        var freePos = FindFreeGridPosition(new Vector2(nd.positionX, nd.positionY), guid);
+                        nd.positionX = freePos.x;
+                        nd.positionY = freePos.y;
+                        _nodeRects[guid] = new Rect(freePos, new Vector2(NodeWidth, NodeHeight));
+                        SortChildrenByPosition();
+                    }
+                }
                 AutoSave();
+            }
         }
 
         // ─── コンテキストメニュー ─────────────────────────────
@@ -1162,12 +1178,14 @@ namespace ModuTree.Editor.Windows
             if (_treeData == null) return;
             PushUndo();
 
+            // グリッドにスナップし、衝突しない位置に配置
+            var spawnPos = FindFreeGridPosition(SnapToGrid(graphPos), null);
             var nd = new NodeData
             {
                 guid      = Guid.NewGuid().ToString(),
                 typeName  = type.AssemblyQualifiedName,
-                positionX = graphPos.x,
-                positionY = graphPos.y
+                positionX = spawnPos.x,
+                positionY = spawnPos.y
             };
 
             _treeData.nodes.Add(nd);
@@ -1382,9 +1400,14 @@ namespace ModuTree.Editor.Windows
             foreach (var src in _clipboard)
             {
                 var nd = CloneNodeData(src);
-                nd.guid       = guidMap[src.guid];
-                nd.positionX += 40f;
-                nd.positionY += 40f;
+                nd.guid = guidMap[src.guid];
+
+                // 貼り付け先が埋まっていたら右下に1グリッドずつずらす
+                var pastePos = FindFreeGridPosition(
+                    new Vector2(src.positionX + GridSize, src.positionY + GridSize), nd.guid);
+                nd.positionX = pastePos.x;
+                nd.positionY = pastePos.y;
+
                 // 子接続もGUID変換
                 nd.childrenGuids = nd.childrenGuids
                     .Select(g => guidMap.TryGetValue(g, out var ng) ? ng : g)
@@ -1694,6 +1717,40 @@ namespace ModuTree.Editor.Windows
             {
                 Debug.LogError($"[ModuTree] 自動保存に失敗しました: {ex.Message}");
             }
+        }
+
+        // ─── グリッドスナップ・衝突回避 ──────────────────────
+
+        /// <summary>位置をグリッドにスナップする</summary>
+        private static Vector2 SnapToGrid(Vector2 pos)
+            => new Vector2(
+                Mathf.Round(pos.x / GridSize) * GridSize,
+                Mathf.Round(pos.y / GridSize) * GridSize);
+
+        /// <summary>
+        /// preferredPos から始め、同一グリッドセルが埋まっていたら右下に1グリッドずつずらして
+        /// 空きセルを返す。excludeGuid のノードは判定から除外する。
+        /// </summary>
+        private Vector2 FindFreeGridPosition(Vector2 preferredPos, string excludeGuid)
+        {
+            var candidate = SnapToGrid(preferredPos);
+            for (int i = 0; i <= 200; i++)
+            {
+                if (IsGridCellFree(candidate, excludeGuid)) return candidate;
+                candidate += new Vector2(GridSize, GridSize); // 右下へ1グリッドずつ
+            }
+            return candidate;
+        }
+
+        /// <summary>指定グリッド座標に他ノードがいないか確認する（1グリッド分ズレていればOK）</summary>
+        private bool IsGridCellFree(Vector2 gridPos, string excludeGuid)
+        {
+            foreach (var kv in _nodeRects)
+            {
+                if (excludeGuid != null && kv.Key == excludeGuid) continue;
+                if (SnapToGrid(kv.Value.position) == gridPos) return false;
+            }
+            return true;
         }
 
         /// <summary>全CompositeノードのchildrenGuidsをX座標昇順（左優先）に並べ替える</summary>
