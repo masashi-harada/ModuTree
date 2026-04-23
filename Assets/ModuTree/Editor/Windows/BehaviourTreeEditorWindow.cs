@@ -70,8 +70,10 @@ namespace ModuTree.Editor.Windows
         // 接続ドラッグ
         private Vector2 _connectDragPos;
 
-        // 未保存変更
-        private bool    _isDirty;
+        // 保存状態
+        private bool    _isDirty;               // 構造変更の未保存フラグ（内部用）
+        private bool    _isInspectorDirty;      // Inspector パラメータの未適用フラグ
+        private string  _preInspectorSnapshot;  // Inspector 変更前のスナップショット（Undo用）
         private string  _savePath; // 保存先ファイルパス
 
         // Undo履歴
@@ -147,11 +149,11 @@ namespace ModuTree.Editor.Windows
             EditorGUI.DrawRect(new Rect(graphWidth, HeaderHeight, 1f, graphHeight),
                 new Color(0.08f, 0.08f, 0.08f, 1f));
 
-            // インスペクタパネル（右側）
+            DrawStatusBar();
+
+            // インスペクタパネル（右側）— ステータスバーより後に描画して手前に表示
             var inspRect = new Rect(graphWidth + 1f, HeaderHeight, InspectorWidth - 1f, graphHeight);
             DrawInspectorPanel(inspRect);
-
-            DrawStatusBar();
         }
 
         // ─── 背景 ────────────────────────────────────────────
@@ -199,11 +201,18 @@ namespace ModuTree.Editor.Windows
             if (GUILayout.Button("別名保存", EditorStyles.toolbarButton, GUILayout.Width(70)))
                 SaveAs();
 
-            // 保存
-            GUI.enabled = _isDirty;
-            if (GUILayout.Button(_isDirty ? "保存*" : "保存", EditorStyles.toolbarButton, GUILayout.Width(50)))
-                Save();
-            GUI.enabled = true;
+            // 自動保存インジケーター（パスなしの場合のみ手動保存ボタンを表示）
+            if (string.IsNullOrEmpty(_savePath))
+            {
+                if (GUILayout.Button("保存", EditorStyles.toolbarButton, GUILayout.Width(50)))
+                    SaveAs();
+            }
+            else
+            {
+                GUI.enabled = false;
+                GUILayout.Button("自動保存", EditorStyles.toolbarButton, GUILayout.Width(60));
+                GUI.enabled = true;
+            }
 
             GUILayout.Space(10);
 
@@ -466,10 +475,23 @@ namespace ModuTree.Editor.Windows
 
         // ─── インスペクタパネル ──────────────────────────────
 
+        // Inspector パネル下部のApplyボタン領域の高さ
+        private const float InspectorApplyButtonHeight = 38f;
+
         private void DrawInspectorPanel(Rect rect)
         {
             EditorGUI.DrawRect(rect, new Color(0.18f, 0.18f, 0.18f));
-            GUILayout.BeginArea(rect);
+
+            // スクロールエリアとApplyボタンを縦に分割
+            float scrollHeight = rect.height - InspectorApplyButtonHeight;
+            var scrollRect = new Rect(rect.x, rect.y, rect.width, scrollHeight);
+            var applyRect  = new Rect(rect.x, rect.y + scrollHeight, rect.width, InspectorApplyButtonHeight);
+
+            // ── Applyボタン（常に最下部に表示） ──────────────
+            DrawInspectorApplyButton(applyRect);
+
+            // ── スクロールエリア ──────────────────────────────
+            GUILayout.BeginArea(scrollRect);
             _inspectorScrollPos = EditorGUILayout.BeginScrollView(_inspectorScrollPos);
 
             if (_treeData == null || _selected.Count == 0)
@@ -560,7 +582,18 @@ namespace ModuTree.Editor.Windows
             EditorGUILayout.Space(6);
 
             // ── パラメータ ────────────────────────────────
-            EditorGUILayout.LabelField("パラメータ", EditorStyles.boldLabel);
+            // 未適用の変更がある場合はヘッダーをオレンジ色で強調
+            if (_isInspectorDirty)
+            {
+                var prevColor = GUI.color;
+                GUI.color = new Color(1f, 0.6f, 0.2f);
+                EditorGUILayout.LabelField("パラメータ ● 未適用の変更あり", EditorStyles.boldLabel);
+                GUI.color = prevColor;
+            }
+            else
+            {
+                EditorGUILayout.LabelField("パラメータ", EditorStyles.boldLabel);
+            }
 
             if (type != null)
             {
@@ -572,9 +605,12 @@ namespace ModuTree.Editor.Windows
                 DrawInspectorFields(instance, type, _savePath ?? "");
                 if (EditorGUI.EndChangeCheck())
                 {
-                    PushUndo();
+                    // スナップショットは parametersJson 更新の前に取る（破棄時に正しく戻れるよう）
+                    if (!_isInspectorDirty)
+                        _preInspectorSnapshot = BehaviourTreeSerializer.ToJson(_treeData);
                     nd.parametersJson = MiniJson.SerializeFields(instance);
-                    MarkDirty();
+                    _isInspectorDirty = true;
+                    Repaint();
                 }
             }
             else
@@ -588,6 +624,27 @@ namespace ModuTree.Editor.Windows
 
             EditorGUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawInspectorApplyButton(Rect rect)
+        {
+            // セパレーター
+            EditorGUI.DrawRect(new Rect(rect.x, rect.y, rect.width, 1f),
+                new Color(0.08f, 0.08f, 0.08f, 1f));
+
+            var btnRect = new Rect(rect.x + 6f, rect.y + 5f, rect.width - 12f, rect.height - 10f);
+
+            var prevBg = GUI.backgroundColor;
+            GUI.backgroundColor = _isInspectorDirty
+                ? new Color(0.85f, 0.4f, 0.2f)   // 未適用ありは目立つオレンジ
+                : new Color(0.3f, 0.3f, 0.3f);    // 通常はグレー
+
+            GUI.enabled = _isInspectorDirty;
+            if (GUI.Button(btnRect, _isInspectorDirty ? "パラメータを適用 ●" : "パラメータを適用"))
+                ApplyInspectorChanges();
+            GUI.enabled = true;
+
+            GUI.backgroundColor = prevBg;
         }
 
         private void DrawInspectorFields(object instance, Type type, string basePath = "")
@@ -768,10 +825,11 @@ namespace ModuTree.Editor.Windows
 
         private void HandleKeyDown(Event e)
         {
-            // Cmd/Ctrl + S: 保存
+            // Cmd/Ctrl + S: Inspector の未適用変更を含めて保存
             if ((e.command || e.control) && e.keyCode == KeyCode.S)
             {
-                Save();
+                ApplyInspectorChanges();
+                AutoSave();
                 e.Use();
                 return;
             }
@@ -861,9 +919,17 @@ namespace ModuTree.Editor.Windows
                         return;
                     }
 
-                    // ノード選択
+                    // ノード選択（別ノードへ切り替える場合はInspector未適用変更を破棄）
                     if (!e.shift && !_selected.Contains(hitGuid))
+                    {
+                        DiscardInspectorChanges();
                         _selected.Clear();
+                    }
+                    else if (e.shift)
+                    {
+                        // Shift追加でも複数選択になりInspectorが隠れるので破棄
+                        DiscardInspectorChanges();
+                    }
                     if (e.shift && _selected.Contains(hitGuid))
                         _selected.Remove(hitGuid);
                     else
@@ -901,7 +967,8 @@ namespace ModuTree.Editor.Windows
                     }
                     else
                     {
-                        // 空白クリック → 選択解除 + ボックス選択開始
+                        // 空白クリック → 選択解除 + ボックス選択開始（Inspector変更を破棄）
+                        DiscardInspectorChanges();
                         if (!e.shift) _selected.Clear();
                         _isBoxSelecting   = true;
                         _boxSelectStart   = mousePos;
@@ -944,7 +1011,6 @@ namespace ModuTree.Editor.Windows
                     _nodeRects[guid] = new Rect(newPos, new Vector2(NodeWidth, NodeHeight));
                 }
                 SortChildrenByPosition();
-                MarkDirty();
                 Repaint();
                 e.Use();
                 return;
@@ -990,9 +1056,14 @@ namespace ModuTree.Editor.Windows
                 return;
             }
 
+            bool wasDraggingNodes = _isDraggingNodes;
             _isDraggingNodes  = false;
             _isBoxSelecting   = false;
             _isDraggingCanvas = false;
+
+            // ドロップ時点でノード位置を自動保存
+            if (wasDraggingNodes && _selected.Count > 0)
+                AutoSave();
         }
 
         // ─── コンテキストメニュー ─────────────────────────────
@@ -1274,7 +1345,6 @@ namespace ModuTree.Editor.Windows
 
             var data = new BehaviourTreeData();
             LoadTree(data, path);
-            _isDirty = true;
             Repaint();
         }
 
@@ -1339,11 +1409,22 @@ namespace ModuTree.Editor.Windows
 
         private void Undo()
         {
+            // Inspector に未適用の変更がある場合はまずそれを破棄
+            if (_isInspectorDirty && _preInspectorSnapshot != null)
+            {
+                _treeData             = BehaviourTreeSerializer.FromJson(_preInspectorSnapshot);
+                _preInspectorSnapshot = null;
+                _isInspectorDirty     = false;
+                RebuildNodeRects();
+                Repaint();
+                return;
+            }
+
             if (_undoStack.Count == 0) return;
             var snapshot = _undoStack.Pop();
             _treeData    = BehaviourTreeSerializer.FromJson(snapshot);
             RebuildNodeRects();
-            MarkDirty();
+            AutoSave();
             Repaint();
         }
 
@@ -1396,9 +1477,11 @@ namespace ModuTree.Editor.Windows
 
         private void LoadTree(BehaviourTreeData data, string path)
         {
-            _treeData   = data;
-            _savePath   = path;
-            _isDirty    = false;
+            _treeData             = data;
+            _savePath             = path;
+            _isDirty              = false;
+            _isInspectorDirty     = false;
+            _preInspectorSnapshot = null;
             _selected.Clear();
             _undoStack.Clear();
             RebuildNodeRects();
@@ -1555,7 +1638,62 @@ namespace ModuTree.Editor.Windows
 
         private void MarkDirty()
         {
-            _isDirty = true;
+            AutoSave();
+        }
+
+        private void MarkInspectorDirty()
+        {
+            // ※スナップショット取得は呼び出し元（parametersJson更新前）で行う
+            _isInspectorDirty = true;
+            Repaint();
+        }
+
+        /// <summary>
+        /// Inspector の未適用変更を破棄する。
+        /// 別ノードへ選択切り替え時などに呼ぶ。
+        /// </summary>
+        private void DiscardInspectorChanges()
+        {
+            if (!_isInspectorDirty) return;
+            // treeData をスナップショット時点に戻す
+            if (_preInspectorSnapshot != null)
+            {
+                _treeData = BehaviourTreeSerializer.FromJson(_preInspectorSnapshot);
+                RebuildNodeRects();
+            }
+            _preInspectorSnapshot = null;
+            _isInspectorDirty     = false;
+        }
+
+        private void ApplyInspectorChanges()
+        {
+            if (!_isInspectorDirty) return;
+            // 適用前の状態をUndoスタックに積む
+            if (_preInspectorSnapshot != null)
+                _undoStack.Push(_preInspectorSnapshot);
+            _preInspectorSnapshot = null;
+            _isInspectorDirty     = false;
+            AutoSave();
+        }
+
+        private void AutoSave()
+        {
+            if (_treeData == null || string.IsNullOrEmpty(_savePath)) return;
+            try
+            {
+                var json = BehaviourTreeSerializer.ToJson(_treeData);
+                File.WriteAllText(_savePath, json);
+                _isDirty = false;
+                // 常にアセットDBを更新（Play中でも TextAsset のキャッシュを最新に保つ）
+                AssetDatabase.ImportAsset(_savePath);
+                // ランタイム中はエンジンもホットリロード
+                if (Application.isPlaying && _runtimeEngine != null)
+                    _runtimeEngine.Initialize(json, _runtimeEngine.BaseDirectory);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ModuTree] 自動保存に失敗しました: {ex.Message}");
+            }
         }
 
         /// <summary>全CompositeノードのchildrenGuidsをX座標昇順（左優先）に並べ替える</summary>
