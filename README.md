@@ -1,23 +1,25 @@
 # ModuTree
 
-A modular Behaviour Tree editor and runtime system for Unity.
+Design your game AI visually. Run it anywhere — C#, PHP, and beyond.  
+A modular Behaviour Tree editor for Unity with cross-platform runtimes.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
+![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
 ## ModuTree とは
 
-**「AIのロジックを、グラフで描く。Unityの外でも動かす。」**
+**「AIのロジックを、グラフで描く。どこでも動かす。」**
 
-ModuTree は、Unity向けのビジュアル Behaviour Tree エディタ＆ランタイムシステムです。
+ModuTree は、Unity向けのビジュアル Behaviour Tree エディタ＆マルチプラットフォーム・ランタイムシステムです。
 
 従来の Behaviour Tree 実装では、AIロジックが Unity の MonoBehaviour やシーンに強く結びついてしまい、「設計の見通しが悪い」「サーバーや他の環境では動かない」という問題がありました。
 ModuTree はこの課題を、**エディタ・データ・ランタイムの3層分離**という設計で解決します。
 
 - **グラフィカルなAIデザイン** — ノードをつなぐだけで AI の行動ロジックを視覚的に組み立てられます。コードを書かずにツリーを構築・調整でき、企画者とエンジニアが同じ画面で議論できます。
-- **AIデータの Unity 非依存化** — BehaviourTree のデータは JSON ファイルとして保存されます。ロジックは Pure C# で記述されるため、**Unity のない環境（サーバー、CLI ツールなど）でもそのまま動作します**。
+- **クロスプラットフォーム実行** — AIデータは JSON ファイルとして保存されます。**Pure C# Runtime**（Unity 非依存のサーバー・CLI 向け）と **PHP 8.1+ Runtime**（Web API 向け）の両方が付属しており、Unity で作ったツリーをそのまま別環境で動かせます。
 - **非同期駆動で直感的な `Running` 表現** — `async / await` を活用することで、「処理中」という状態を自然なコードで表現できます。フレームをまたぐ複雑な行動も、シンプルに記述できます。
 - **高速な実装サイクル** — ノード単位でロジックをカプセル化し、Blackboard でデータを共有する設計により、AIの追加・変更・テストが素早く行えます。Play 中にツリーを編集するとその場で動作に反映される**ホットリロード**対応です。
 - **Blackboard によるロジック分離** — AIの「判断」と「実行」を Blackboard 経由で疎結合に保ちます。ノード内では Unity API を呼ばず判断結果を書き込むだけ。テストしやすく、移植もしやすい設計です。
