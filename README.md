@@ -1,23 +1,25 @@
 # ModuTree
 
-A modular Behaviour Tree editor and runtime system for Unity.
+Design your game AI visually. Run it anywhere — C#, PHP, and beyond.  
+A modular Behaviour Tree editor for Unity with cross-platform runtimes.
 
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black?logo=unity)
+![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?logo=php&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
 
 ## ModuTree とは
 
-**「AIのロジックを、グラフで描く。Unityの外でも動かす。」**
+**「AIのロジックを、グラフで描く。どこでも動かす。」**
 
-ModuTree は、Unity向けのビジュアル Behaviour Tree エディタ＆ランタイムシステムです。
+ModuTree は、Unity向けのビジュアル Behaviour Tree エディタ＆マルチプラットフォーム・ランタイムシステムです。
 
 従来の Behaviour Tree 実装では、AIロジックが Unity の MonoBehaviour やシーンに強く結びついてしまい、「設計の見通しが悪い」「サーバーや他の環境では動かない」という問題がありました。
 ModuTree はこの課題を、**エディタ・データ・ランタイムの3層分離**という設計で解決します。
 
 - **グラフィカルなAIデザイン** — ノードをつなぐだけで AI の行動ロジックを視覚的に組み立てられます。コードを書かずにツリーを構築・調整でき、企画者とエンジニアが同じ画面で議論できます。
-- **AIデータの Unity 非依存化** — BehaviourTree のデータは JSON ファイルとして保存されます。ロジックは Pure C# で記述されるため、**Unity のない環境（サーバー、CLI ツールなど）でもそのまま動作します**。
+- **クロスプラットフォーム実行** — AIデータは JSON ファイルとして保存されます。**Pure C# Runtime**（Unity 非依存のサーバー・CLI 向け）と **PHP 8.1+ Runtime**（Web API 向け）の両方が付属しており、Unity で作ったツリーをそのまま別環境で動かせます。
 - **非同期駆動で直感的な `Running` 表現** — `async / await` を活用することで、「処理中」という状態を自然なコードで表現できます。フレームをまたぐ複雑な行動も、シンプルに記述できます。
 - **高速な実装サイクル** — ノード単位でロジックをカプセル化し、Blackboard でデータを共有する設計により、AIの追加・変更・テストが素早く行えます。Play 中にツリーを編集するとその場で動作に反映される**ホットリロード**対応です。
 - **Blackboard によるロジック分離** — AIの「判断」と「実行」を Blackboard 経由で疎結合に保ちます。ノード内では Unity API を呼ばず判断結果を書き込むだけ。テストしやすく、移植もしやすい設計です。
@@ -29,9 +31,10 @@ ModuTree はこの課題を、**エディタ・データ・ランタイムの3�
 ## Features
 
 - **Visual node editor** — drag-and-drop graph editor built on Unity IMGUI
-- **Pure C# runtime** — `Runtime/` has no Unity dependencies (`noEngineReferences: true`), so it can run on a server too
-- **Async-driven** — `Running` state expressed naturally with `async Task`
-- **JSON persistence** — no ScriptableObjects; zero external dependencies via MiniJson
+- **Pure C# runtime** — `Runtime/CSharp/` has no Unity dependencies (`noEngineReferences: true`), so it can run on a server too
+- **PHP 8.1+ runtime** — `Runtime/PHP~/` provides a synchronous PHP port; use the same JSON files from Unity in a Web API
+- **Async-driven** — `Running` state expressed naturally with `async Task` (C#) / synchronous loop (PHP)
+- **JSON persistence** — no ScriptableObjects; zero external dependencies via MiniJson (C#) / `json_decode` (PHP)
 - **Blackboard** — type-safe key/value store decoupling AI logic from execution
 - **Hot reload** — swap JSON at runtime and the tree reloads instantly
 - **Play-mode editing** — edit the tree while the game is running; changes save and hot-reload immediately
@@ -54,9 +57,17 @@ ModuTree はこの課題を、**エディタ・データ・ランタイムの3�
 
 ## Getting Started
 
-### Installation
+### Installation (Unity)
 
 Copy the `Assets/ModuTree/` folder into your Unity project. That's it — no package manager required.
+
+### Installation (PHP)
+
+Copy `Assets/ModuTree/Runtime/PHP~/` to your server as `Runtime/`, then `require_once` the autoloader:
+
+```php
+require_once 'Runtime/autoload.php';
+```
 
 ### Writing a Custom Node
 
@@ -136,6 +147,40 @@ public class TurnRunner : BehaviourTreeRunner
         }
         while (state == NodeState.Running && !_cts.Token.IsCancellationRequested);
     }
+}
+```
+
+### Using the PHP Runtime (Web API)
+
+Design your tree in Unity, export the JSON, then run it from PHP:
+
+```php
+<?php
+require_once 'Runtime/autoload.php';
+require_once 'Keys/MyBBKeys.php';
+require_once 'Nodes/MyConditionNode.php';
+require_once 'Nodes/MyActionNode.php';
+
+$engine = new BehaviourTreeEngine();
+$engine->blackboard->set(MyBBKeys::$playerInput, $requestData['input']);
+
+$jsonPath = 'AIData/MyTree.json';
+$engine->initialize(file_get_contents($jsonPath), dirname($jsonPath));
+
+// Runs synchronously until Success or Failure
+$state = $engine->runToCompletion();
+$result = $engine->blackboard->get(MyBBKeys::$aiDecision);
+
+echo json_encode(['result' => $result]);
+```
+
+PHP class names must match the C# class names (e.g. `MyConditionNode`) — the serializer resolves them automatically. For `enum`, use PHP 8.1 int-backed enums with the same integer values as C#:
+
+```php
+enum JankenHand: int {
+    case Rock     = 0;
+    case Scissors = 1;
+    case Paper    = 2;
 }
 ```
 
@@ -262,6 +307,24 @@ SelectorNodeData (root)
 
 `JankenRunner` disables the auto-`Update()` loop and runs the tree to completion on each button press. Select the GameObject in the Hierarchy during Play to watch the node execution in the ModuTree Editor.
 
+A PHP version is included at `Samples/ModuTree/JankenSample/PHP/`. Run it from the **project root** with PHP CLI to verify the runtime against the same JSON:
+
+```bash
+# Rock (0) → AI plays Paper (2) → player loses
+php -r "\$_GET['hand']=0; ob_start(); include 'Assets/Samples/ModuTree/JankenSample/PHP/janken_api.php'; echo ob_get_clean();"
+
+# Scissors (1) → AI plays Rock (0) → player loses
+php -r "\$_GET['hand']=1; ob_start(); include 'Assets/Samples/ModuTree/JankenSample/PHP/janken_api.php'; echo ob_get_clean();"
+
+# Paper (2) → AI plays Scissors (1) → player loses
+php -r "\$_GET['hand']=2; ob_start(); include 'Assets/Samples/ModuTree/JankenSample/PHP/janken_api.php'; echo ob_get_clean();"
+```
+
+Expected response (Rock):
+```json
+{"playerHand":0,"playerHandLabel":"グー","aiHand":2,"aiHandLabel":"パー","result":"lose"}
+```
+
 ---
 
 ## Project Structure
@@ -269,7 +332,9 @@ SelectorNodeData (root)
 ```
 Assets/
 ├── ModuTree/
-│   ├── Runtime/           # Pure C# (no Unity references)
+│   ├── Runtime/
+│   │   ├── CSharp/        # Pure C# runtime (no Unity references) — copy this for C# servers
+│   │   └── PHP~/          # PHP 8.1+ runtime — copy this for PHP servers (~ = Unity ignores it)
 │   ├── UnityIntegration/  # BehaviourTreeRunner (MonoBehaviour)
 │   └── Editor/            # IMGUI editor window
 └── Samples/
@@ -277,6 +342,7 @@ Assets/
         ├── BasicSample/
         ├── SubTreeSample/
         └── JankenSample/
+            └── PHP/       # PHP version of the Janken sample (janken_api.php)
 ```
 
 ---
